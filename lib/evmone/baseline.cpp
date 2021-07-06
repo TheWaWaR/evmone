@@ -190,7 +190,9 @@ evmc_result execute(const VM& vm, ExecutionState& state, const CodeAnalysis& ana
     if constexpr (TracingEnabled)
         tracer->notify_execution_start(state.rev, *state.msg, state.code);
 
-    const auto& instruction_table = get_baseline_instruction_table(state.rev);
+    const auto& instruction_table = analysis.code_begin == 0 ?
+                                        get_baseline_legacy_instruction_table(state.rev) :
+                                        get_baseline_instruction_table(state.rev);
 
     const auto* const code = state.code.data();
     const auto* code_it = code + analysis.code_begin;  // Code iterator for the interpreter loop.
