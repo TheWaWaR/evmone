@@ -1,0 +1,71 @@
+// evmone: Fast Ethereum Virtual Machine implementation
+// Copyright 2021 The evmone Authors.
+// SPDX-License-Identifier: Apache-2.0
+
+#include <evmone/eof.hpp>
+#include <gtest/gtest.h>
+#include <test/utils/utils.hpp>
+
+using namespace evmone;
+
+namespace
+{
+inline EOFValidationErrror validate_eof(evmc_revision rev, bytes_view code) noexcept
+{
+    return ::validate_eof(rev, code.data(), code.size());
+}
+}  // namespace
+
+TEST(eof_validation, validate_empty_code)
+{
+    EXPECT_EQ(validate_eof(EVMC_SHANGHAI, {}), EOFValidationErrror::invalid_prefix);
+}
+
+TEST(eof_validation, validate_EOF_prefix)
+{
+    EXPECT_EQ(validate_eof(EVMC_SHANGHAI, from_hex("00")), EOFValidationErrror::invalid_prefix);
+    EXPECT_EQ(validate_eof(EVMC_SHANGHAI, from_hex("FE")), EOFValidationErrror::invalid_prefix);
+    EXPECT_EQ(validate_eof(EVMC_SHANGHAI, from_hex("EF")), EOFValidationErrror::invalid_prefix);
+
+    EXPECT_EQ(validate_eof(EVMC_SHANGHAI, from_hex("EFCA")), EOFValidationErrror::invalid_prefix);
+    EXPECT_EQ(
+        validate_eof(EVMC_SHANGHAI, from_hex("EFCBFE01")), EOFValidationErrror::invalid_prefix);
+    EXPECT_EQ(
+        validate_eof(EVMC_SHANGHAI, from_hex("EFCAFF01")), EOFValidationErrror::invalid_prefix);
+
+    EXPECT_EQ(
+        validate_eof(EVMC_SHANGHAI, from_hex("EFCAFE")), EOFValidationErrror::eof_version_unknown);
+
+    EXPECT_EQ(validate_eof(EVMC_SHANGHAI, from_hex("EFCAFE01")),
+        EOFValidationErrror::section_headers_not_terminated);
+}
+
+// TODO tests from pre-Shanghai
+
+TEST(eof_validation, validate_EOF_version)
+{
+    EXPECT_EQ(validate_eof(EVMC_SHANGHAI, from_hex("EFCAFE02")),
+        EOFValidationErrror::eof_version_unknown);
+    EXPECT_EQ(validate_eof(EVMC_SHANGHAI, from_hex("EFCAFEFF")),
+        EOFValidationErrror::eof_version_unknown);
+}
+
+TEST(eof_validation, minimal_valid_EOF1_code)
+{
+    EXPECT_EQ(validate_eof(EVMC_SHANGHAI, from_hex("EFCAFE01 010001 00 FE")),
+        EOFValidationErrror::success);
+}
+
+TEST(eof_validation, minimal_valid_EOF1_code_with_data)
+{
+    EXPECT_EQ(validate_eof(EVMC_SHANGHAI, from_hex("EFCAFE01 010001 020001 00 FE DA")),
+        EOFValidationErrror::success);
+}
+
+TEST(eof_validation, EOF1_code_section_missing)
+{
+    EXPECT_EQ(validate_eof(EVMC_SHANGHAI, from_hex("EFCAFE01 00")),
+        EOFValidationErrror::code_section_missing);
+    EXPECT_EQ(validate_eof(EVMC_SHANGHAI, from_hex("EFCAFE01 020001 DA")),
+        EOFValidationErrror::code_section_missing);
+}
