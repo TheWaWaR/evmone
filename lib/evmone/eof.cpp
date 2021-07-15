@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cassert>
+#include <numeric>
 
 namespace evmone
 {
@@ -16,6 +17,100 @@ constexpr uint8_t MAGIC[] = {0xca, 0xfe};
 constexpr uint8_t TERMINATOR = 0x00;
 constexpr uint8_t CODE_SECTION = 0x01;
 constexpr uint8_t DATA_SECTION = 0x02;
+constexpr uint8_t TABLE_SECTION = 0x03;
+constexpr uint8_t MAX_SECTION = TABLE_SECTION;
+
+using EOFSectionHeaders = std::array<std::vector<int>, MAX_SECTION + 1>;
+
+std::pair<EOFSectionHeaders, EOFValidationErrror> validate_eof_headers(
+    uint8_t version, const uint8_t* code, size_t code_size) noexcept
+{
+    enum class State
+    {
+        section_id,
+        section_size,
+        terminated
+    };
+
+    auto state = State::section_id;
+    uint8_t section_id = 0;
+    EOFSectionHeaders section_headers;
+    const auto* code_end = code + code_size;
+    auto it = code + sizeof(MAGIC) + 2;  // FORMAT + MAGIC + VERSION
+    while (it != code_end && state != State::terminated)
+    {
+        switch (state)
+        {
+        case State::section_id:
+        {
+            section_id = *it;
+            switch (section_id)
+            {
+            case TERMINATOR:
+                if (section_headers[CODE_SECTION].empty())
+                    return {{}, EOFValidationErrror::code_section_missing};
+                state = State::terminated;
+                break;
+            case DATA_SECTION:
+                if (section_headers[CODE_SECTION].empty())
+                    return {{}, EOFValidationErrror::code_section_missing};
+                if (!section_headers[DATA_SECTION].empty())
+                    return {{}, EOFValidationErrror::multiple_data_sections};
+                state = State::section_size;
+                break;
+            case CODE_SECTION:
+                if (!section_headers[CODE_SECTION].empty())
+                    return {{}, EOFValidationErrror::multiple_code_sections};
+                state = State::section_size;
+                break;
+            case TABLE_SECTION:
+                if (version < 2)
+                    return {{}, EOFValidationErrror::unknown_section_id};
+                if (section_headers[CODE_SECTION].empty())
+                    return {{}, EOFValidationErrror::code_section_missing};
+                state = State::section_size;
+                break;
+            default:
+                return {{}, EOFValidationErrror::unknown_section_id};
+            }
+            break;
+        }
+        case State::section_size:
+        {
+            const auto size_hi = *it;
+            ++it;
+            if (it == code_end)
+                return {{}, EOFValidationErrror::incomplete_section_size};
+            const auto size_lo = *it;
+            const auto section_size = (size_hi << 8) | size_lo;
+            if (section_size == 0)
+                return {{}, EOFValidationErrror::zero_section_size};
+
+            section_headers[section_id].push_back(section_size);
+            state = State::section_id;
+            break;
+        }
+        case State::terminated:
+            return {{}, EOFValidationErrror::impossible};
+        }
+
+        ++it;
+    }
+
+    if (state != State::terminated)
+        return {{}, EOFValidationErrror::section_headers_not_terminated};
+
+    auto section_bodies_size = section_headers[CODE_SECTION][0];
+    if (!section_headers[DATA_SECTION].empty())
+        section_bodies_size += section_headers[DATA_SECTION][0];
+    section_bodies_size += std::accumulate(section_headers[TABLE_SECTION].begin(),
+                                   section_headers[TABLE_SECTION].end(), 0);
+    const auto remaining_code_size = code_end - it;
+    if (section_bodies_size != remaining_code_size)
+        return {{}, EOFValidationErrror::invalid_section_bodies_size};
+
+    return {section_headers, EOFValidationErrror::success};
+}
 }  // namespace
 
 size_t EOF1Header::code_begin() const noexcept
@@ -120,80 +215,26 @@ uint8_t get_eof_version(const uint8_t* code, size_t code_size) noexcept
 std::pair<EOF1Header, EOFValidationErrror> validate_eof1(
     const uint8_t* code, size_t code_size) noexcept
 {
-    enum class State
-    {
-        section_id,
-        section_size,
-        terminated
-    };
+    const auto [section_headers, error] = validate_eof_headers(1, code, code_size);
+    if (error != EOFValidationErrror::success)
+        return {{}, error};
 
-    auto state = State::section_id;
-    uint8_t section_id = 0;
-    int section_sizes[3] = {0, 0, 0};
-    const auto* code_end = code + code_size;
-    auto it = code + sizeof(MAGIC) + 2;  // FORMAT + MAGIC + VERSION
-    while (it != code_end && state != State::terminated)
-    {
-        switch (state)
-        {
-        case State::section_id:
-        {
-            section_id = *it;
-            switch (section_id)
-            {
-            case TERMINATOR:
-                if (section_sizes[CODE_SECTION] == 0)
-                    return {{}, EOFValidationErrror::code_section_missing};
-                state = State::terminated;
-                break;
-            case DATA_SECTION:
-                if (section_sizes[CODE_SECTION] == 0)
-                    return {{}, EOFValidationErrror::code_section_missing};
-                if (section_sizes[DATA_SECTION] != 0)
-                    return {{}, EOFValidationErrror::multiple_data_sections};
-                state = State::section_size;
-                break;
-            case CODE_SECTION:
-                if (section_sizes[CODE_SECTION] != 0)
-                    return {{}, EOFValidationErrror::multiple_code_sections};
-                state = State::section_size;
-                break;
-            default:
-                return {{}, EOFValidationErrror::unknown_section_id};
-            }
-            break;
-        }
-        case State::section_size:
-        {
-            const auto size_hi = *it;
-            ++it;
-            if (it == code_end)
-                return {{}, EOFValidationErrror::incomplete_section_size};
-            const auto size_lo = *it;
-            const auto section_size = (size_hi << 8) | size_lo;
-            if (section_size == 0)
-                return {{}, EOFValidationErrror::zero_section_size};
+    EOF1Header header{section_headers[CODE_SECTION][0],
+        section_headers[DATA_SECTION].empty() ? 0 : section_headers[DATA_SECTION][0]};
+    return {header, EOFValidationErrror::success};
+}
 
-            section_sizes[section_id] = section_size;
-            state = State::section_id;
-            break;
-        }
-        case State::terminated:
-            return {{}, EOFValidationErrror::impossible};
-        }
+std::pair<EOF2Header, EOFValidationErrror> validate_eof2(
+    const uint8_t* code, size_t code_size) noexcept
+{
+    const auto [section_headers, error] = validate_eof_headers(2, code, code_size);
+    if (error != EOFValidationErrror::success)
+        return {{}, error};
 
-        ++it;
-    }
-
-    if (state != State::terminated)
-        return {{}, EOFValidationErrror::section_headers_not_terminated};
-
-    const auto section_bodies_size = section_sizes[CODE_SECTION] + section_sizes[DATA_SECTION];
-    const auto remaining_code_size = code_end - it;
-    if (section_bodies_size != remaining_code_size)
-        return {{}, EOFValidationErrror::invalid_section_bodies_size};
-
-    return {{section_sizes[0], section_sizes[1]}, EOFValidationErrror::success};
+    EOF2Header header{section_headers[CODE_SECTION][0],
+        section_headers[DATA_SECTION].empty() ? 0 : section_headers[DATA_SECTION][0],
+        section_headers[TABLE_SECTION]};
+    return {header, EOFValidationErrror::success};
 }
 
 EOFValidationErrror validate_eof(evmc_revision rev, const uint8_t* code, size_t code_size) noexcept
@@ -212,6 +253,12 @@ EOFValidationErrror validate_eof(evmc_revision rev, const uint8_t* code, size_t 
         if (rev < EVMC_SHANGHAI)
             return EOFValidationErrror::eof_version_unknown;
         return validate_eof1(code, code_size).second;
+    }
+    case 2:
+    {
+        if (rev < EVMC_SHANGHAI)
+            return EOFValidationErrror::eof_version_unknown;
+        return validate_eof2(code, code_size).second;
     }
     }
 }

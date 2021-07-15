@@ -73,6 +73,9 @@ uint8_t get_eof_version(const uint8_t* code, size_t code_size) noexcept;
 std::pair<EOF1Header, EOFValidationErrror> validate_eof1(
     const uint8_t* code, size_t code_size) noexcept;
 
+std::pair<EOF2Header, EOFValidationErrror> validate_eof2(
+    const uint8_t* code, size_t code_size) noexcept;
+
 EVMC_EXPORT EOFValidationErrror validate_eof(
     evmc_revision rev, const uint8_t* code, size_t code_size) noexcept;
 
