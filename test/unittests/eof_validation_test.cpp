@@ -69,3 +69,17 @@ TEST(eof_validation, EOF1_code_section_missing)
     EXPECT_EQ(validate_eof(EVMC_SHANGHAI, from_hex("EFCAFE01 020001 DA")),
         EOFValidationErrror::code_section_missing);
 }
+
+TEST(eof_validation, EOF1_multiple_code_sections)
+{
+    EXPECT_EQ(validate_eof(EVMC_SHANGHAI, from_hex("EFCAFE01 010001 010001 00 FE FE")),
+        EOFValidationErrror::multiple_code_sections);
+    EXPECT_EQ(validate_eof(EVMC_SHANGHAI, from_hex("EFCAFE01 010001 010001 020001 00 FE FE DA")),
+        EOFValidationErrror::multiple_code_sections);
+}
+
+TEST(eof_validation, EOF1_multiple_data_sections)
+{
+    EXPECT_EQ(validate_eof(EVMC_SHANGHAI, from_hex("EFCAFE01 010001 020001 020001 00 FE DA DA")),
+        EOFValidationErrror::multiple_data_sections);
+}
