@@ -49,15 +49,12 @@ AdvancedCodeAnalysis analyze(evmc_revision rev, const uint8_t* code, size_t code
     const auto max_instrs_size = code_size + 1;
     analysis.instrs.reserve(max_instrs_size);
 
-    // This is 2x more than needed but using (code_size / 2 + 1) increases page-faults 1000x.
-    const auto max_args_storage_size = code_size + 1;
-    analysis.push_values.reserve(max_args_storage_size);
-
     // Create first block.
     analysis.instrs.emplace_back(opx_beginblock_fn);
     auto block = block_analysis{0};
 
     const auto code_end = code + code_size;
+    analysis.code_end = code_end;
     auto code_pos = code;
 
     while (code_pos != code_end)
@@ -115,25 +112,11 @@ AdvancedCodeAnalysis analyze(evmc_revision rev, const uint8_t* code, size_t code
         case ANY_LARGE_PUSH:
         {
             const auto push_size = static_cast<size_t>(opcode - OP_PUSH1) + 1;
-            const auto push_end = code_pos + push_size;
-
-            auto& push_value = analysis.push_values.emplace_back();
-            const auto push_value_bytes = intx::as_bytes(push_value);
-            auto insert_pos = &push_value_bytes[push_size - 1];
-
-            // Copy bytes to the deticated storage in the order to match native endianness.
-            // The condition `code_pos < code_end` is to handle the edge case of PUSH being at
-            // the end of the code with incomplete value bytes.
-            // This condition can be replaced with single `push_end <= code_end` done once before
-            // the loop. Then the push value will stay 0 but the value is not reachable
-            // during the execution anyway.
-            // This seems like a good micro-optimization but we were not able to show
-            // this is faster, at least with GCC 8 (producing the best results at the time).
-            // FIXME: Add support for big endian architectures.
-            while (code_pos < push_end && code_pos < code_end)
-                *insert_pos-- = *code_pos++;
-
-            instr.arg.push_value = &push_value;
+            instr.arg.push_value = code_pos;
+            code_pos += push_size;
+            if (code_pos > code_end) {
+              code_pos = code_end;
+            }
             break;
         }
 
@@ -173,9 +156,6 @@ AdvancedCodeAnalysis analyze(evmc_revision rev, const uint8_t* code, size_t code
     analysis.instrs.emplace_back(op_tbl[OP_STOP].fn);
 
     // FIXME: assert(analysis.instrs.size() <= max_instrs_size);
-
-    // Make sure the push_values has not been reallocated. Otherwise iterators are invalid.
-    assert(analysis.push_values.size() <= max_args_storage_size);
 
     return analysis;
 }

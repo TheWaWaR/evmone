@@ -103,7 +103,23 @@ const instruction* op_push_small(const instruction* instr, AdvancedExecutionStat
 
 const instruction* op_push_full(const instruction* instr, AdvancedExecutionState& state) noexcept
 {
-    state.stack.push(*instr->arg.push_value);
+    uint8_t *code_pos = (uint8_t *)instr->arg.push_value;
+    uint8_t opcode = *(code_pos - 1);
+
+    const auto push_size = static_cast<size_t>(opcode - OP_PUSH1) + 1;
+    const auto push_end = code_pos + push_size;
+
+    intx::uint256 push_value{0};
+    const auto push_value_bytes = intx::as_bytes(push_value);
+    auto insert_pos = &push_value_bytes[push_size - 1];
+
+    const uint8_t *code_end = state.analysis->code_end;
+    while (code_pos < push_end && code_pos < code_end)
+    {
+      *insert_pos-- = *code_pos++;
+    }
+
+    state.stack.push(push_value);
     return ++instr;
 }
 
