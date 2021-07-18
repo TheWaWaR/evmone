@@ -146,7 +146,7 @@ struct execution_state
 union instruction_argument
 {
     int64_t number;
-    const intx::uint256* push_value;
+    const uint8_t* push_value;
     uint64_t small_push_value;
     block_info block{};
 };
@@ -192,8 +192,8 @@ struct code_analysis
 {
     std::vector<instruction> instrs;
 
-    /// Storage for large push values.
-    std::vector<intx::uint256> push_values;
+    /// The code end pointer.
+    const uint8_t *code_end;
 
     /// The offsets of JUMPDESTs in the original code.
     /// These are values that JUMP/JUMPI receives as an argument.
