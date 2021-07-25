@@ -57,31 +57,57 @@ struct evm_stack
 
 /// The EVM memory.
 ///
-/// At this point it is a wrapper for std::vector<uint8_t> with initial allocation of 4k.
-/// Some benchmarks has been done to confirm 4k is ok-ish value.
-/// Also std::basic_string<uint8_t> has been tried but not faster and we don't want SSO
-/// if initial_capacity is used.
-/// In future, transition to std::realloc() + std::free() planned.
+/// Use 512 KB as max_heap_memory_size of evm_memory,
+/// since there is only 1 MB heap memory to run contracts in CKB VM.
 class evm_memory
 {
     /// The initial memory allocation.
-    static constexpr size_t initial_capacity = 4 * 1024;
-
-    std::vector<uint8_t> m_memory;
+    static const size_t max_heap_memory_size = 1024 * 512; // 512K bytes
+    inline static uint8_t m_memory[max_heap_memory_size];
+    static constexpr uint8_t* end = std::end(m_memory);
+    inline static uint8_t* used_ptr = m_memory;
+    uint8_t* begin = nullptr;
 
 public:
-    evm_memory() noexcept { m_memory.reserve(initial_capacity); }
+    evm_memory() noexcept {
+        begin = used_ptr;
+    }
 
     evm_memory(const evm_memory&) = delete;
     evm_memory& operator=(const evm_memory&) = delete;
 
-    uint8_t& operator[](size_t index) noexcept { return m_memory[index]; }
+    uint8_t& operator[](size_t idx) noexcept {
+        return m_memory[static_cast<size_t>(begin - m_memory) + idx];
+    }
 
-    [[nodiscard]] size_t size() const noexcept { return m_memory.size(); }
+    [[nodiscard]] size_t size() const noexcept {
+        return static_cast<size_t>(used_ptr - begin);
+    }
 
-    void resize(size_t new_size) { m_memory.resize(new_size); }
+    bool update_used_ptr(size_t new_position) {
+        used_ptr = begin + new_position;
 
-    void clear() noexcept { m_memory.clear(); }
+        // out of bounds
+        if (used_ptr > end) return false;
+
+        return true;
+    }
+
+    bool resize(size_t new_size) {
+        used_ptr = begin + new_size;
+
+        // out of bounds
+        if (used_ptr > end) {
+            return false;
+            // throw std::overflow_error("out-of-memory");
+        }
+
+        // TODO: try to allocate more memory to m_memory
+        // and catch OUT_OF_MEMORY error if failed
+        return true;
+    }
+
+    void clear() noexcept { used_ptr = begin; }
 };
 
 /// Generic execution state for generic instructions implementations.
